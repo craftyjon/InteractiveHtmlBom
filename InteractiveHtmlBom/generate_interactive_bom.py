@@ -43,24 +43,43 @@ def main():
     parser = argparse.ArgumentParser(
             description='KiCad InteractiveHtmlBom plugin CLI.',
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('file',
+    parser.add_argument('file', nargs='?',
                         type=lambda s: to_utf(s),
                         help="KiCad PCB file")
 
     Config.add_options(parser, version)
+    parser.add_argument('--kicad-ipc', action='store_true',
+                        help="Connect to KiCad IPC API instead of loading board from a file")
     args = parser.parse_args()
     logger = ibom.Logger(cli=True)
 
-    if not os.path.isfile(args.file):
-        exit_error(logger, ExitCodes.ERROR_FILE_NOT_FOUND,
-                   "File %s does not exist." % args.file)
+    if args.kicad_ipc:
+        from kipy import KiCad
+        from kipy.errors import ConnectionError
+        from .ecad.kicad_ipc import KiCadIPCParser
 
-    print("Loading %s" % args.file)
+        try:
+            kicad = KiCad(timeout_ms=250)
+            board = kicad.get_board()
+            config = Config(version, kicad.get_project(board.document).path)
+            parser = KiCadIPCParser(board, config, logger)
+        except ConnectionError as e:
+            exit_error(logger, ExitCodes.ERROR_KICAD_IPC_NOT_CONNECTED,
+                       f"KiCad IPC server is not running or not accessible: {e}")
+    else:
+        if not args.file:
+            exit_error(logger, ExitCodes.ERROR_FILE_NOT_FOUND, "File argument is required.")
 
-    config = Config(version, os.path.dirname(os.path.abspath(args.file)))
+        if not os.path.isfile(args.file):
+            exit_error(logger, ExitCodes.ERROR_FILE_NOT_FOUND,
+                    "File %s does not exist." % args.file)
 
-    parser = get_parser_by_extension(
-        os.path.abspath(args.file), config, logger)
+        print("Loading %s" % args.file)
+
+        config = Config(version, os.path.dirname(os.path.abspath(args.file)))
+
+        parser = get_parser_by_extension(
+            os.path.abspath(args.file), config, logger)
 
     if args.show_dialog:
         if not create_wx_app:

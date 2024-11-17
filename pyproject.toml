@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
   "wxpython>=4.0",
   "jsonschema>=4.1",
+  "kicad-python>=0.1.0a1"
 ]
 
 [project.scripts]

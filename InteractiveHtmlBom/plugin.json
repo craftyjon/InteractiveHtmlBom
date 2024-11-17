@@ -1,0 +1,27 @@
+{
+    "identifier": "org.openscopeproject.InteractiveHtmlBomIPCDemo",
+    "name": "Interactive HTML BOM",
+    "description": "Generate interactive HTML BOM to assist with manual pcb assembly",
+    "runtime": {
+        "type": "python",
+        "min_version": "3.9"
+    },
+    "actions": [
+        {
+            "identifier": "interactive-html-bom-gui",
+            "name": "Open BOM Generator",
+            "description": "Opens the Interactive HTML BOM generator dialog",
+            "show-button": true,
+            "scopes": [
+                "pcb"
+            ],
+            "entrypoint": "generate_interactive_bom.py",
+            "args": [
+                "--kicad-ipc"
+            ],
+            "icons-light": [
+                "icon.png"
+            ]
+        }
+    ]
+}

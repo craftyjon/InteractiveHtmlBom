@@ -5,7 +5,7 @@ class ExitCodes():
     ERROR_PARSE = 3
     ERROR_FILE_NOT_FOUND = 4
     ERROR_NO_DISPLAY = 5
-
+    ERROR_KICAD_IPC_NOT_CONNECTED = 6
 
 class ParsingException(Exception):
     pass
