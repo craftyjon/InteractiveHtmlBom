@@ -1,8 +1,20 @@
 from kipy.board import Board
-from kipy.board_types import FootprintInstance, BoardLayer
+from kipy.board_types import (
+    Arc,
+    Bezier,
+    BoardLayer,
+    Circle,
+    FootprintInstance,
+    Polygon,
+    Rectangle,
+    Segment,
+    Shape,
+)
+from kipy.geometry import Box2, Vector2
 
 from .common import EcadParser, Component, ExtraFieldData
-
+from math import degrees
+from typing import cast
 
 class KiCadIPCParser(EcadParser):
 
@@ -17,21 +29,110 @@ class KiCadIPCParser(EcadParser):
         # TODO: implement
         return super().get_extra_field_data(file_name)
     
+    @staticmethod
+    def normalize(point):
+        if isinstance(point, Vector2):
+            return [point.x * 1e-6, point.y * 1e-6]
+        elif isinstance(point, int):
+            return point * 1e-6
+
+    @staticmethod
+    def normalize_angle(angle):
+        if isinstance(angle, int) or isinstance(angle, float):
+            return angle * 0.1
+        else:
+            return angle.AsDegrees()
+    
+    def parse_shape(self, d: Shape) -> dict | None:        
+        if isinstance(d, Segment):
+            d = cast(Segment, d)
+            return {
+                "type": "segment",
+                "start": self.normalize(d.start),
+                "end": self.normalize(d.end),
+                "width": self.normalize(d.attributes.stroke.width),
+            }
+        
+        elif isinstance(d, Circle):
+            d = cast(Circle, d)
+            return {
+                "type": "circle",
+                "start": d.center,
+                "radius": self.normalize(d.radius()),
+                "width": self.normalize(d.attributes.stroke.width),
+                "filled": int(d.attributes.fill.filled)
+            }
+        
+        elif isinstance(d, Arc):
+            d = cast(Arc, d)
+            a1, a2 = d.start_angle(), d.end_angle()
+            return {
+                "type": "arc",
+                "start": self.normalize(d.center()),
+                "radius": self.normalize(d.radius()),
+                "startangle": degrees(a1) if a1 is not None else None,
+                "endangle": degrees(a2) if a2 is not None else None,
+                "width": self.normalize(d.attributes.stroke.width),
+            }
+        
+        elif isinstance(d, Polygon):
+            d = cast(Polygon, d)
+            shape_dict = {
+                "type": "polygon",
+                "angle": 0,
+                "polygons": d.polygons
+            }
+
+            if not d.attributes.fill.filled:
+                shape_dict["filled"] = 0
+                shape_dict["width"] = self.normalize(d.attributes.stroke.width)
+            return shape_dict
+        
+        elif isinstance(d, Bezier):
+            d = cast(Bezier, d)
+            return {
+                "type": "curve",
+                "start": self.normalize(d.start),
+                "cpa": self.normalize(d.control1),
+                "cpb": self.normalize(d.control2),
+                "end": self.normalize(d.end),
+                "width": self.normalize(d.attributes.stroke.width),
+            }
+        elif isinstance(d, Rectangle):
+            d = cast(Rectangle, d)
+            start = self.normalize(d.top_left)
+            end = self.normalize(d.bottom_right)
+            points = [
+                start,
+                [end[0], start[1]],
+                end,
+                [start[0], end[1]]
+            ]
+            return {
+                "type": "polygon",
+                "pos": [0, 0],
+                "angle": 0,
+                "polygons": [points],
+                "width": self.normalize(d.attributes.stroke.width),
+                "filled": int(d.attributes.fill.filled)
+            }
+ 
+        self.logger.info("Unsupported shape %s, skipping", type(d).__name__)
+        return None
+    
     def parse_edges(self):
         edges = []
+        # TODO: this returns only shapes, not dimensions or text the way the old API does
         drawings = list(self.board.get_shapes())
-        bbox = None
+        bbox = Box2()
         for f in self.footprints:
             for g in f.definition.shapes():
                 drawings.append(g)
         for d in drawings:
             if d.layer == BoardLayer.BL_Edge_Cuts:
-                for parsed_drawing in self.parse_drawing(d):
+                for parsed_drawing in self.parse_shape(d):
                     edges.append(parsed_drawing)
-                    if bbox is None:
-                        bbox = d.GetBoundingBox()
-                    else:
-                        bbox.Merge(d.GetBoundingBox())
+                bbox.merge(d.bounding_box())
         if bbox:
             bbox.Normalize()
         return edges, bbox
