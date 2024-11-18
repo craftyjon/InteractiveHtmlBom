@@ -142,15 +142,17 @@ class KiCadIPCParser(EcadParser):
 
     def parse_edges(self, drawings):
         edges = []
-        bbox = Box2()
+        bbox = None
         for f in self.footprints:
             for g in f.definition.shapes():
                 drawings.append(g)
         for d in drawings:
             if d.layer == BoardLayer.BL_Edge_Cuts:
-                for parsed_drawing in self.parse_shape(d):
-                    edges.append(parsed_drawing)
-                bbox.merge(d.bounding_box())
+                edges.append(self.parse_shape(d))
+                if bbox is None:
+                    bbox = d.bounding_box()
+                else:
+                    bbox.merge(d.bounding_box())
         # TODO(JE) needed?
         # if bbox:
         #     bbox.Normalize()
@@ -169,8 +171,8 @@ class KiCadIPCParser(EcadParser):
             BoardLayer.BL_B_Cu: 'B',
         }.get(footprint.layer)
 
-        return Component(footprint.reference_field.text,
-                         footprint.value_field.text,
+        return Component(footprint.reference_field.text.value,
+                         footprint.value_field.text.value,
                          footprint_name,
                          layer,
                          attr,
@@ -293,7 +295,7 @@ class KiCadIPCParser(EcadParser):
                     continue
                 drawings.append({
                     "layer": "F" if d.layer == BoardLayer.BL_F_Cu else "B",
-                    "drawing": d,
+                    "drawing": self.parse_shape(d),
                 })
 
             # footprint pads
@@ -322,7 +324,7 @@ class KiCadIPCParser(EcadParser):
 
             # add footprint
             footprints.append({
-                "ref": ref,
+                "ref": ref.value,
                 "bbox": bbox,
                 "pads": pads,
                 "drawings": drawings,
@@ -363,12 +365,12 @@ class KiCadIPCParser(EcadParser):
             "edges": edges,
             "drawings": {
                 "silkscreen": [
-                    d
+                    self.parse_shape(d)  # TODO: handle text and dimensions
                     for d in drawings
                     if d.layer in [BoardLayer.BL_F_SilkS, BoardLayer.BL_B_SilkS]
                 ],
                 "fabrication": [
-                    d
+                    self.parse_shape(d)  # TODO: handle text and dimensions
                     for d in drawings
                     if d.layer in [BoardLayer.BL_F_Fab, BoardLayer.BL_B_Fab]
                 ],
