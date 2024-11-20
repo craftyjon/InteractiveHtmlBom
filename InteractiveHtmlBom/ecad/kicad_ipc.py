@@ -15,6 +15,7 @@ from kipy.board_types import (
     PadType,
     PadStackShape,
     Polygon,
+    PolygonWithHoles,
     Rectangle,
     Segment,
     Shape,
@@ -51,7 +52,7 @@ class KiCadIPCParser(EcadParser):
     def normalize(point: Vector2 | int | float):
         if isinstance(point, Vector2):
             return [point.x * 1e-6, point.y * 1e-6]
-        elif isinstance(point, int):
+        else:
             return point * 1e-6
 
     @staticmethod
@@ -62,6 +63,20 @@ class KiCadIPCParser(EcadParser):
             return angle.degrees
         else:
             return angle.AsDegrees()
+
+    def parse_polygon(self, p: PolygonWithHoles):
+        result = []
+        for node in p.outline.nodes:
+            if node.has_point:
+                result.append(self.normalize(node.point))
+            elif node.has_arc:
+                # TODO: SWIG iteration gives you the arc approximation as points.
+                # The IPC API shouldn't do this because we don't want approximation differences to
+                # show up as changes in what the API delivers for a given board, so either the
+                # clients need to start handling arcs or we need to put an arc approximation
+                # mechanism into kicad-python?
+                self.logger.warn("Arcs in polygons are not supported in IPC prototype")
+        return result
 
     def parse_shape(self, d: Shape) -> dict | None:
         if isinstance(d, Segment):
@@ -77,7 +92,7 @@ class KiCadIPCParser(EcadParser):
             d = cast(Circle, d)
             return {
                 "type": "circle",
-                "start": d.center,
+                "start": self.normalize(d.center),
                 "radius": self.normalize(d.radius()),
                 "width": self.normalize(d.attributes.stroke.width),
                 "filled": int(d.attributes.fill.filled)
@@ -99,8 +114,9 @@ class KiCadIPCParser(EcadParser):
             d = cast(Polygon, d)
             shape_dict = {
                 "type": "polygon",
+                "pos": [0, 0],
                 "angle": 0,
-                "polygons": d.polygons
+                "polygons": [self.parse_polygon(p) for p in d.polygons]
             }
 
             if not d.attributes.fill.filled:
@@ -229,12 +245,15 @@ class KiCadIPCParser(EcadParser):
         }
 
         if shape == "custom":
-            # TODO(JE) do we need this in the API?
-            # polygon_set = pad.GetCustomShapeAsPolygon()
-            # if polygon_set.HasHoles():
-            #     self.logger.warn('Detected holes in custom pad polygons')
-            # pad_dict["polygons"] = self.parse_poly_set(polygon_set)
-            self.logger.warn('Custom pad shape is not supported yet in IPC prototype')
+            polygon = self.board.get_pad_shapes_as_polygons(pad)
+            if polygon is not None:
+                # get_pad_shapes_as_polygons returns absolute positions, but the function that
+                # SWIG exposed that IBOM was using returned relative positions
+                polygon.move(-pad.position)
+                pad_dict["polygons"] = [self.parse_polygon(polygon),]
+            else:
+                pad_dict["polygons"] = []
+                self.logger.warn('Custom pad shape could not be retrieved for pad %s', pad.number)
             pass
         if shape == "trapezoid":
             # treat trapezoid as custom shape
@@ -278,7 +297,9 @@ class KiCadIPCParser(EcadParser):
 
             # bounding box
             # TODO: add API call for bounding box
-            footprint_rect = Box2.from_pos_size(f.position, Vector2.from_xy(1000, 1000))
+            footprint_rect = self.board.get_item_bounding_box(f)
+            assert(footprint_rect)
+            footprint_rect.move(-f.position)
 
             bbox = {
                 "pos": self.normalize(f.position),
@@ -364,16 +385,14 @@ class KiCadIPCParser(EcadParser):
             "edges_bbox": bbox,
             "edges": edges,
             "drawings": {
-                "silkscreen": [
-                    self.parse_shape(d)  # TODO: handle text and dimensions
-                    for d in drawings
-                    if d.layer in [BoardLayer.BL_F_SilkS, BoardLayer.BL_B_SilkS]
-                ],
-                "fabrication": [
-                    self.parse_shape(d)  # TODO: handle text and dimensions
-                    for d in drawings
-                    if d.layer in [BoardLayer.BL_F_Fab, BoardLayer.BL_B_Fab]
-                ],
+                "silkscreen": {
+                    "F": [self.parse_shape(s) for s in drawings if s.layer == BoardLayer.BL_F_SilkS],
+                    "B": [self.parse_shape(s) for s in drawings if s.layer == BoardLayer.BL_B_SilkS],
+                },
+                "fabrication": {
+                    "F": [self.parse_shape(s) for s in drawings if s.layer == BoardLayer.BL_F_Fab],
+                    "B": [self.parse_shape(s) for s in drawings if s.layer == BoardLayer.BL_B_Fab],
+                }
             },
             "footprints": self.parse_footprints(),
             "metadata": {
