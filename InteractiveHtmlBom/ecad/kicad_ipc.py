@@ -359,11 +359,7 @@ class KiCadIPCParser(EcadParser):
 
         # TODO: extra field handling?
 
-        # TODO: title block stuff
-        title = ""
-        revision = ""
-        company = ""
-        file_date = ""
+        title_block = self.board.get_title_block_info()
 
         # TODO: this returns only shapes, not dimensions or text the way the old API does
         drawings = list(self.board.get_shapes())
@@ -396,10 +392,10 @@ class KiCadIPCParser(EcadParser):
             },
             "footprints": self.parse_footprints(),
             "metadata": {
-                "title": title,
-                "revision": revision,
-                "company": company,
-                "date": file_date,
+                "title": title_block.title,
+                "revision": title_block.revision,
+                "company": title_block.company,
+                "date": title_block.date,
             },
             "bom": {},
             "font_data": self.font_parser.get_parsed_font(),
