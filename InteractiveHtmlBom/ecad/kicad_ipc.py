@@ -5,6 +5,7 @@ from typing import cast, overload
 from kipy.board import Board
 from kipy.board_types import (
     Arc,
+    ArcTrack,
     Bezier,
     BoardLayer,
     ChamferedRectCorners,
@@ -19,6 +20,8 @@ from kipy.board_types import (
     Rectangle,
     Segment,
     Shape,
+    Track,
+    Via
 )
 from kipy.geometry import Angle, Box2, Vector2
 
@@ -354,6 +357,49 @@ class KiCadIPCParser(EcadParser):
 
         return footprints
 
+    def parse_tracks(self, tracks):
+        result = {BoardLayer.BL_F_Cu: [], BoardLayer.BL_B_Cu: []}
+        for track in tracks:
+            if isinstance(track, Via):
+                track_dict = {
+                    "start": self.normalize(track.position),
+                    "end": self.normalize(track.position),
+                    "width": self.normalize(track.padstack.copper_layers[0].size.x),
+                    "net": track.net.name,
+                }
+
+                if track.padstack.is_masked():
+                    track_dict["drillsize"] = self.normalize(track.padstack.drill.diameter)
+
+                for layer in [BoardLayer.BL_F_Cu, BoardLayer.BL_B_Cu]:
+                    if layer in track.padstack.layers:
+                        result[layer].append(track_dict)
+            else:
+                if track.layer in [BoardLayer.BL_F_Cu, BoardLayer.BL_B_Cu]:
+                    if isinstance(track, ArcTrack):
+                        track_dict = {
+                            "center": self.normalize(track.center()),
+                            "startangle": track.start_angle(),
+                            "endangle": track.end_angle(),
+                            "radius": self.normalize(track.radius()),
+                            "width": self.normalize(track.width)
+                        }
+                    else:
+                        track_dict = {
+                            "start": self.normalize(track.start),
+                            "end": self.normalize(track.end),
+                            "width": self.normalize(track.width)
+                        }
+                    # TODO(JE)
+                    # if self.config.include_nets:
+                    #     track_dict["net"] = track.GetNetname()
+                    result[track.layer].append(track_dict)
+
+        return {
+            'F': result.get(BoardLayer.BL_F_Cu),
+            'B': result.get(BoardLayer.BL_B_Cu)
+        }
+
     def parse(self):
         from ..errors import ParsingException
 
@@ -400,9 +446,10 @@ class KiCadIPCParser(EcadParser):
             "bom": {},
             "font_data": self.font_parser.get_parsed_font(),
         }
-        #TODO(JE) not yet
-        # if self.config.include_tracks:
-        #     pcbdata["tracks"] = self.parse_tracks(self.board.get_tracks())
+
+        if self.config.include_tracks:
+            pcbdata["tracks"] = self.parse_tracks(self.board.get_tracks() + self.board.get_vias())
+         #TODO(JE) not yet
         #     pcbdata["zones"] = self.parse_zones(self.board.get_zones())
         # if self.config.include_nets:
         #     pcbdata["nets"] = self.parse_netlist(self.board.get_netlist())
