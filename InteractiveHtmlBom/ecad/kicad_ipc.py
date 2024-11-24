@@ -1,4 +1,3 @@
-from inspect import stack
 from math import degrees
 from typing import Sequence, cast, overload
 
@@ -8,9 +7,12 @@ from kipy.board_types import (
     ArcTrack,
     Bezier,
     BoardLayer,
+    BoardText,
+    BoardTextBox,
     ChamferedRectCorners,
     Circle,
     DrillShape,
+    Field,
     FootprintInstance,
     Pad,
     PadType,
@@ -22,9 +24,9 @@ from kipy.board_types import (
     Shape,
     Via,
     Zone,
-    ZoneType,
 )
-from kipy.geometry import Angle, Box2, Vector2
+from kipy.common_types import HorizontalAlignment, VerticalAlignment
+from kipy.geometry import Angle, Vector2
 
 from .common import EcadParser, Component, ExtraFieldData
 from ..core.fontparser import FontParser
@@ -82,7 +84,48 @@ class KiCadIPCParser(EcadParser):
                 self.logger.warn("Arcs in polygons are not supported in IPC prototype")
         return result
 
-    def parse_shape(self, d: Shape) -> dict | None:
+    def parse_horizontal_alignment(self, justify: HorizontalAlignment.ValueType) -> int:
+        return {
+            HorizontalAlignment.HA_LEFT: -1,
+            HorizontalAlignment.HA_CENTER: 0,
+            HorizontalAlignment.HA_RIGHT: 1,
+        }.get(justify, 0)
+
+    def parse_vertical_alignment(self, justify: VerticalAlignment.ValueType) -> int:
+        return {
+            VerticalAlignment.VA_BOTTOM: -1,
+            VerticalAlignment.VA_CENTER: 0,
+            VerticalAlignment.VA_TOP: 1,
+        }.get(justify, 0)
+
+    def parse_text(self, d: BoardText | BoardTextBox) -> dict:
+        attributes = []
+        if d.attributes.mirrored:
+            attributes.append("mirrored")
+        if d.attributes.italic:
+            attributes.append("italic")
+        if d.attributes.bold:
+            attributes.append("bold")
+
+        self.font_parser.parse_font_for_string(d.value)
+
+        pos = self.normalize(d.position if isinstance(d, BoardText) else d.top_left)
+
+        return {
+            "pos": pos,
+            "text": d.value,
+            "height": self.normalize(d.attributes.size.y),
+            "width": self.normalize(d.attributes.size.x),
+            "justify": [
+                self.parse_horizontal_alignment(d.attributes.horizontal_alignment),
+                self.parse_vertical_alignment(d.attributes.vertical_alignment),
+            ],
+            "thickness": self.normalize(d.attributes.stroke_width.value_nm),
+            "attr": attributes,
+            "angle": d.attributes.angle.value_degrees,
+        }
+
+    def parse_shape(self, d: Shape | BoardText | BoardTextBox | Field) -> dict | None:
         if isinstance(d, Segment):
             d = cast(Segment, d)
             return {
@@ -138,6 +181,7 @@ class KiCadIPCParser(EcadParser):
                 "end": self.normalize(d.end),
                 "width": self.normalize(d.attributes.stroke.width),
             }
+
         elif isinstance(d, Rectangle):
             d = cast(Rectangle, d)
             start = self.normalize(d.top_left)
@@ -157,6 +201,12 @@ class KiCadIPCParser(EcadParser):
                 "filled": int(d.attributes.fill.filled)
             }
 
+        elif isinstance(d, BoardText) or isinstance(d, BoardTextBox):
+            return self.parse_text(d)
+
+        elif isinstance(d, Field):
+            return self.parse_text(d.text)
+
         self.logger.info("Unsupported shape %s, skipping", type(d).__name__)
         return None
 
@@ -164,7 +214,7 @@ class KiCadIPCParser(EcadParser):
         edges = []
         bbox = None
         for f in self.footprints:
-            for g in f.definition.shapes():
+            for g in f.definition.shapes:
                 drawings.append(g)
         for d in drawings:
             if d.layer == BoardLayer.BL_Edge_Cuts:
@@ -314,7 +364,7 @@ class KiCadIPCParser(EcadParser):
 
             # graphical drawings
             drawings = []
-            for d in f.definition.shapes():
+            for d in f.definition.shapes:
                 # we only care about copper ones, silkscreen is taken care of
                 if d.layer not in [BoardLayer.BL_F_Cu, BoardLayer.BL_B_Cu]:
                     continue
@@ -325,7 +375,7 @@ class KiCadIPCParser(EcadParser):
 
             # footprint pads
             pads = []
-            for p in f.definition.pads():
+            for p in f.definition.pads:
                 pad_dict = self.parse_pad(p)
                 if pad_dict is not None:
                     pads.append((p.number, pad_dict))
@@ -433,8 +483,13 @@ class KiCadIPCParser(EcadParser):
 
         title_block = self.board.get_title_block_info()
 
-        # TODO: this returns only shapes, not dimensions or text the way the old API does
+        # TODO: dimensions
         drawings = list(self.board.get_shapes())
+        drawings.extend(self.board.get_text())
+
+        for f in self.footprints:
+            for d in f.texts_and_fields:
+                drawings.append(d)
 
         edges, bbox = self.parse_edges(drawings)
         if bbox is None:
