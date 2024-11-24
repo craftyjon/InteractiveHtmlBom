@@ -1,6 +1,6 @@
 from inspect import stack
 from math import degrees
-from typing import cast, overload
+from typing import Sequence, cast, overload
 
 from kipy.board import Board
 from kipy.board_types import (
@@ -20,8 +20,9 @@ from kipy.board_types import (
     Rectangle,
     Segment,
     Shape,
-    Track,
-    Via
+    Via,
+    Zone,
+    ZoneType,
 )
 from kipy.geometry import Angle, Box2, Vector2
 
@@ -390,10 +391,35 @@ class KiCadIPCParser(EcadParser):
                             "end": self.normalize(track.end),
                             "width": self.normalize(track.width)
                         }
-                    # TODO(JE)
-                    # if self.config.include_nets:
-                    #     track_dict["net"] = track.GetNetname()
+                    if self.config.include_nets:
+                        track_dict["net"] = track.net.name
                     result[track.layer].append(track_dict)
+
+        return {
+            'F': result.get(BoardLayer.BL_F_Cu),
+            'B': result.get(BoardLayer.BL_B_Cu)
+        }
+
+    def parse_zones(self, zones: Sequence[Zone]):
+        result = {BoardLayer.BL_F_Cu: [], BoardLayer.BL_B_Cu: []}
+        for zone in zones:
+            if (not zone.filled or zone.is_rule_area()):
+                continue
+            layers = [layer for layer in zone.layers
+                      if layer in [BoardLayer.BL_F_Cu, BoardLayer.BL_B_Cu]]
+            width = self.normalize(zone.min_thickness)
+            polys = zone.filled_polygons
+            for layer in layers:
+                if layer not in polys.keys():
+                    continue
+
+                zone_dict = {
+                    "polygons": [self.parse_polygon(p) for p in polys[layer]],
+                    "width": width,
+                }
+                if self.config.include_nets:
+                    zone_dict["net"] = zone.net.name
+                result[layer].append(zone_dict)
 
         return {
             'F': result.get(BoardLayer.BL_F_Cu),
@@ -449,8 +475,7 @@ class KiCadIPCParser(EcadParser):
 
         if self.config.include_tracks:
             pcbdata["tracks"] = self.parse_tracks(self.board.get_tracks() + self.board.get_vias())
-         #TODO(JE) not yet
-        #     pcbdata["zones"] = self.parse_zones(self.board.get_zones())
+            pcbdata["zones"] = self.parse_zones(self.board.get_zones())
         # if self.config.include_nets:
         #     pcbdata["nets"] = self.parse_netlist(self.board.get_netlist())
 
