@@ -338,9 +338,8 @@ class KiCadIPCParser(EcadParser):
 
         pad_dict["offset"] = self.normalize(stack_layer.offset)
 
-        # TODO
-        # if self.config.include_nets:
-        #     pad_dict["net"] = pad.GetNetname()
+        if self.config.include_nets:
+            pad_dict["net"] = pad.net.name
 
         return pad_dict
 
@@ -531,8 +530,8 @@ class KiCadIPCParser(EcadParser):
         if self.config.include_tracks:
             pcbdata["tracks"] = self.parse_tracks(self.board.get_tracks() + self.board.get_vias())
             pcbdata["zones"] = self.parse_zones(self.board.get_zones())
-        # if self.config.include_nets:
-        #     pcbdata["nets"] = self.parse_netlist(self.board.get_netlist())
+        if self.config.include_nets:
+            pcbdata["nets"] = sorted([net.name for net in self.board.get_nets()])
 
         extra_fields = [{}] * len(self.footprints)
 
