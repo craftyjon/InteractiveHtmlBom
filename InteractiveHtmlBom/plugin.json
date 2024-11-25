@@ -17,7 +17,8 @@
             ],
             "entrypoint": "generate_interactive_bom.py",
             "args": [
-                "--kicad-ipc"
+                "--kicad-ipc",
+                "--show-dialog"
             ],
             "icons-light": [
                 "icon.png"

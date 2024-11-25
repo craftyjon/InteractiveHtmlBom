@@ -31,8 +31,6 @@ from kipy.geometry import Angle, Vector2
 from .common import EcadParser, Component, ExtraFieldData
 from ..core.fontparser import FontParser
 
-
-
 class KiCadIPCParser(EcadParser):
 
     def __init__(self, board: Board, config, logger):
@@ -223,9 +221,6 @@ class KiCadIPCParser(EcadParser):
                     bbox = d.bounding_box()
                 else:
                     bbox.merge(d.bounding_box())
-        # TODO(JE) needed?
-        # if bbox:
-        #     bbox.Normalize()
         return edges, bbox
 
     @staticmethod
