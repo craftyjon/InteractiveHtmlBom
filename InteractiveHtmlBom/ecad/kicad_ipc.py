@@ -3,31 +3,33 @@ from typing import Sequence, cast, overload
 
 from kipy.board import Board
 from kipy.board_types import (
-    Arc,
     ArcTrack,
-    Bezier,
+    BoardArc,
+    BoardBezier,
+    BoardCircle,
     BoardLayer,
+    BoardPolygon,
+    BoardRectangle,
+    BoardSegment,
+    BoardShape,
     BoardText,
     BoardTextBox,
     ChamferedRectCorners,
-    Circle,
     DrillShape,
     Field,
     FootprintInstance,
     Pad,
-    PadType,
     PadStackShape,
-    Polygon,
+    PadType,
     PolygonWithHoles,
-    Rectangle,
-    Segment,
-    Shape,
     Via,
     Zone,
 )
-from kipy.common_types import HorizontalAlignment, VerticalAlignment
+from kipy.kicad import KiCad
+from kipy.common_types import HorizontalAlignment, VerticalAlignment, Segment, Polygon
 from kipy.geometry import Angle, Vector2
 
+from .svgpath import create_path
 from .common import EcadParser, Component, ExtraFieldData
 from ..core.fontparser import FontParser
 
@@ -36,6 +38,7 @@ class KiCadIPCParser(EcadParser):
     def __init__(self, board: Board, config, logger):
         super(KiCadIPCParser, self).__init__(None, config, logger)
         self.board = board
+        self.kicad = KiCad.from_client(self.board.client)
         self.footprints = self.board.get_footprints()
         self.file_name = board.document.board_filename
         self.font_parser = FontParser()
@@ -68,8 +71,10 @@ class KiCadIPCParser(EcadParser):
         else:
             return angle.AsDegrees()
 
-    def parse_polygon(self, p: PolygonWithHoles):
+    def parse_polygon(self, p: PolygonWithHoles | Polygon):
         result = []
+        if isinstance(p, Polygon):
+            p = p.polygons[0]
         for node in p.outline.nodes:
             if node.has_point:
                 result.append(self.normalize(node.point))
@@ -97,35 +102,39 @@ class KiCadIPCParser(EcadParser):
         }.get(justify, 0)
 
     def parse_text(self, d: BoardText | BoardTextBox) -> dict:
-        attributes = []
-        if d.attributes.mirrored:
-            attributes.append("mirrored")
-        if d.attributes.italic:
-            attributes.append("italic")
-        if d.attributes.bold:
-            attributes.append("bold")
+        shapes = self.kicad.get_text_as_shapes(
+            d.as_text() if isinstance(d, BoardText) else d.as_textbox()
+        )
 
-        self.font_parser.parse_font_for_string(d.value)
+        segments = []
+        polygons = []
+        offset = d.position if isinstance(d, BoardText) else d.top_left
 
-        pos = self.normalize(d.position if isinstance(d, BoardText) else d.top_left)
+        for subshape in shapes[0]:
+            if isinstance(subshape, Segment):
+                segments.append(
+                    [
+                        self.normalize(subshape.start + offset),
+                        self.normalize(subshape.end + offset),
+                    ]
+                )
+            elif isinstance(subshape, Polygon):
+                subshape.polygons[0].move(offset)
+                polygons.append(self.parse_polygon(subshape))
 
-        return {
-            "pos": pos,
-            "text": d.value,
-            "height": self.normalize(d.attributes.size.y),
-            "width": self.normalize(d.attributes.size.x),
-            "justify": [
-                self.parse_horizontal_alignment(d.attributes.horizontal_alignment),
-                self.parse_vertical_alignment(d.attributes.vertical_alignment),
-            ],
-            "thickness": self.normalize(d.attributes.stroke_width.value_nm),
-            "attr": attributes,
-            "angle": d.attributes.angle.value_degrees,
-        }
+        if segments:
+            return {
+                "thickness": self.normalize(d.attributes.stroke_width.value_nm),
+                "svgpath": create_path(segments)
+            }
+        else:
+            return {
+                "polygons": polygons
+            }
 
-    def parse_shape(self, d: Shape | BoardText | BoardTextBox | Field) -> dict | None:
-        if isinstance(d, Segment):
-            d = cast(Segment, d)
+    def parse_shape(self, d: BoardShape | BoardText | BoardTextBox | Field | Segment) -> dict | None:
+        if isinstance(d, BoardSegment) or isinstance(d, Segment):
+            d = cast(BoardSegment, d)
             return {
                 "type": "segment",
                 "start": self.normalize(d.start),
@@ -133,8 +142,8 @@ class KiCadIPCParser(EcadParser):
                 "width": self.normalize(d.attributes.stroke.width),
             }
 
-        elif isinstance(d, Circle):
-            d = cast(Circle, d)
+        elif isinstance(d, BoardCircle):
+            d = cast(BoardCircle, d)
             return {
                 "type": "circle",
                 "start": self.normalize(d.center),
@@ -143,8 +152,8 @@ class KiCadIPCParser(EcadParser):
                 "filled": int(d.attributes.fill.filled)
             }
 
-        elif isinstance(d, Arc):
-            d = cast(Arc, d)
+        elif isinstance(d, BoardArc):
+            d = cast(BoardArc, d)
             a1, a2 = d.start_angle(), d.end_angle()
             return {
                 "type": "arc",
@@ -155,8 +164,8 @@ class KiCadIPCParser(EcadParser):
                 "width": self.normalize(d.attributes.stroke.width),
             }
 
-        elif isinstance(d, Polygon):
-            d = cast(Polygon, d)
+        elif isinstance(d, BoardPolygon):
+            d = cast(BoardPolygon, d)
             shape_dict = {
                 "type": "polygon",
                 "pos": [0, 0],
@@ -169,8 +178,8 @@ class KiCadIPCParser(EcadParser):
                 shape_dict["width"] = self.normalize(d.attributes.stroke.width)
             return shape_dict
 
-        elif isinstance(d, Bezier):
-            d = cast(Bezier, d)
+        elif isinstance(d, BoardBezier):
+            d = cast(BoardBezier, d)
             return {
                 "type": "curve",
                 "start": self.normalize(d.start),
@@ -180,8 +189,8 @@ class KiCadIPCParser(EcadParser):
                 "width": self.normalize(d.attributes.stroke.width),
             }
 
-        elif isinstance(d, Rectangle):
-            d = cast(Rectangle, d)
+        elif isinstance(d, BoardRectangle):
+            d = cast(BoardRectangle, d)
             start = self.normalize(d.top_left)
             end = self.normalize(d.bottom_right)
             points = [
@@ -478,7 +487,7 @@ class KiCadIPCParser(EcadParser):
         title_block = self.board.get_title_block_info()
 
         # TODO: dimensions
-        drawings = list(self.board.get_shapes())
+        drawings: list[BoardShape | BoardText | BoardTextBox] = list(self.board.get_shapes())
         drawings.extend(self.board.get_text())
 
         for f in self.footprints:
