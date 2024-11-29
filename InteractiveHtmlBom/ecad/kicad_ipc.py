@@ -102,6 +102,9 @@ class KiCadIPCParser(EcadParser):
         }.get(justify, 0)
 
     def parse_text(self, d: BoardText | BoardTextBox) -> dict:
+        if '$' in d.value:
+            d.value = self.board.expand_text_variables(d.value)
+
         shapes = self.kicad.get_text_as_shapes(
             d.as_text() if isinstance(d, BoardText) else d.as_textbox()
         )
